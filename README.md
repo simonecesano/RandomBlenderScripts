@@ -1,10 +1,35 @@
+# Blender scripts
+
+This is a bunch of scripts that try to create, convert or massage 3D assets with Blender.
+
+The goal is for all of them to _at least_
+
+- take zero, one or more files as input
+- generate an output file
+
+So that they can form a modular transformation toolchain.
+
+They should all run like this:
+
+    blender -b some_file.blend --python some_script.py -- --an_option --output some_other_file.blend
+
+or 
+
+    blender -b --python some_script.py -- --json some_data.json --output some_other_file.blend
+
+### Notes
+
+This repo conforms to Sturgeon's law.
+
+## details
+
 ### blender_arg_parse.py
 
 Template for passing command line arguments to a blender-python script  
 
 ### describe_material.py
 
-Utility to dump a text description of materials
+Utility to dump a textual description of materials in a .blend file
 
 ### import_fbx.py
 
