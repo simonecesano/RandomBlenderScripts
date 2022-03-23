@@ -4,6 +4,8 @@ import os
 import argparse
 import json
 import re
+import hashlib
+from pathlib import Path
 
 # Replaces materials according to a JSON file
 # provided as an option
@@ -47,14 +49,21 @@ def strip_materials():
     for m in bpy.data.materials:
         bpy.data.materials.remove(m)    
 
+def md5(fname):
+    hash_md5 = hashlib.md5()
+    with open(fname, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
 
 edit_list = None
+
 
 if (args.list_materials):
     list = []
     for mat in bpy.data.materials:
         list.append(mat.name)
-    if args.format == 'json':
+    if args.output_format == 'json':
         print(json.dumps(list))
         pass
     else:
@@ -66,7 +75,7 @@ if (args.list_parts):
     list = []
     for obj in bpy.data.objects:
         list.append(obj.name)
-    if args.format == 'json':
+    if args.output_format == 'json':
         print(json.dumps(list))
         pass
     else:
@@ -80,36 +89,104 @@ if (args.list_assignments):
         list.append({ "part": obj.name, "materials": [m.material.name for m in obj.material_slots] })
     print(json.dumps(list))
     exit()
-    
-if args.edits_list:
-    palette_path=args.palette_blend_file
 
-    if os.path.isfile(palette_path):
-        try:
-            with bpy.data.libraries.load(os.path.abspath(palette_path), link=False) as (data_from, data_to):
-                data_to.materials = data_from.materials    
-        except BaseException as err:
-            sys.stderr.write("ERROR: palette file not loaded\n")
-            sys.stderr.write(str(err) + "\n")
-            exit()
-    else:
-        sys.stderr.write("ERROR: palette file not found\n")
-        exit()
+def process_edits_list(edits_list):
+    # for (i, m) in enumerate(edit_list):
+    #     print(m)
+    #     if isinstance(m, list):
+    #         print('list')
+    #         edit_list[i] = { "part": m[0], "file": m[1], "material": m[2] }
+    for (i, m) in enumerate(edit_list):
+        if isinstance(m, dict):
+            edit_list[i] = [m["part"], m.get("file"), m["material"] ]
+
+    for (i, m) in enumerate(edit_list):
+        if not m[1]:
+            for path in Path('/home/simone/lp_wf_demo/materials').rglob(m[2]):
+                m[1] = str(path.resolve())
+            
+    for (i, m) in enumerate(edit_list):
+        m[2] = m[2].replace('.blend', "")
         
+    return [ e for e in edit_list if e[0] ]
+
+if args.edits_list:
     edit_list = json.load(args.edits_list)
-    args.edits_list.close()
 
-    output_file = args.output_file
+    # print(edit_list)
 
-    if not len(output_file):
-        basename = os.path.basename(args.edits_list.name)
-        md5 = re.compile('[a-z0-9]{32,32}').findall(basename)[0];
-        output_file=bpy.data.filepath.replace('.blend', '-' + md5 + '.blend');
+    edit_list = process_edits_list(edit_list)
+
+    # print(edit_list)
+    
+    # exit()
+
+    # print(set([m[1] for m in edit_list]))
+
+    edits_by_file = {}
+    
+    for m in edit_list:
+        if not m[1] in edits_by_file.keys(): edits_by_file[m[1]] = []
+        edits_by_file[m[1]].append(m[2])
+
+    for k in edits_by_file.keys():
+        edits_by_file[k] = list(set(edits_by_file[k]))
+        
+    print(edits_by_file)
+    
+    # exit()
+
+    for mat_file in edits_by_file.keys():
+        if os.path.isfile(mat_file):
+            print(mat_file)
+            try:
+                with bpy.data.libraries.load(os.path.abspath(mat_file), link=False) as (data_from, data_to):
+                    # print([m for m in data_from.materials if m in mat_file])
+                    # print([m for m in data_from.materials if m in edits_by_file[mat_file]])
+                    # this is kinda dirty but it works if one sticks to the rule 
+                    # (1) one file, one material (2) material name contained in file name
+                    data_to.materials = [m for m in data_from.materials if m in mat_file]    
+                    print(data_to.materials)
+                    for (i, m) in enumerate(edit_list):
+                        if m[1] == mat_file:
+                            print(m, mat_file)
+                            edit_list[i][2] = data_to.materials[0]
+
+                    
+            except BaseException as err:
+                sys.stderr.write("ERROR: palette file not loaded\n")
+                sys.stderr.write(str(err) + "\n")
+                exit()
+        else:
+            sys.stderr.write("ERROR: palette file not found\n")
+            exit()
 
     for e in edit_list:
-        part = bpy.data.objects[e['part']]
-        mat  = bpy.data.materials[e['material']]
-        part.data.materials[0] = mat
+        print([o.name for o in bpy.data.objects if o.name in e[0] ])
+
+        # gotta throw something here if no part name is found
+        part_name = [o.name for o in bpy.data.objects if o.name in e[0] ][0]
+        part = bpy.data.objects[part_name]
+        mat  = bpy.data.materials[e[2]]
+
+        print("Assigning material {1} to part {0}".format(part.name, mat.name))
+
+        if part.data.materials:
+            part.data.materials[0] = mat
+        else:
+            part.data.materials.append(mat)
+        
+    output_file = args.output_file
+
+    print(args.edits_list.name)
+    if not output_file:
+        basename = os.path.basename(args.edits_list.name)
+        md5 = md5(args.edits_list.name)
+        output_file=bpy.data.filepath.replace('.blend', '-' + md5 + '.blend');
+
+    print("Saving file %s" % os.path.abspath(output_file))
+    args.edits_list.close()
+        
     try:
         bpy.ops.file.pack_all()
         bpy.ops.wm.save_as_mainfile(filepath=output_file)    
